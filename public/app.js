@@ -1,6 +1,6 @@
 import { initializeApp } from '@firebase/app';
 import { getAuth, onAuthStateChanged, getRedirectResult } from '@firebase/auth';
-import { getFirestore, collection, getDocs, doc, setDoc, getDoc } from "@firebase/firestore";
+import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, getDoc } from "@firebase/firestore";
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAFNYbWBmXfcvXd70RLqdDFlI1izflMCcE',
@@ -76,7 +76,7 @@ async function createRoom() {
     sdp: offer.sdp,
   };
 
-  await setDoc(doc(db, 'rooms','offer'), roomOffer)
+  await setDoc(doc(db, 'rooms', 'offer'), roomOffer)
   // await roomRef.set(roomWithOffer);
   roomId = roomRef.id;
   console.log(`New room created with SDP offer. Room ID: ${roomRef.id}`);
@@ -96,7 +96,7 @@ async function createRoom() {
   const calleeCandidatesRef = doc(db, 'rooms', 'calleeCandidates')
   const calleeCandidateSnap = await getDoc(calleeCandidatesRef)
   if(calleeCandidateSnap.exists()) {
-    const data = docSnap.data()
+    const data = calleeCandidateSnap.data()
     console.log("Got new remote ICE candidate:", data);
     await peerConnection.addIceCandidate(new RTCIceCandidate(data));
   } else {
@@ -142,11 +142,12 @@ function joinRoom() {
 }
 
 async function joinRoomById(roomId) {
-  const roomRef = collection('rooms').doc(`${roomId}`);
-  const roomSnapshot = await roomRef.get();
-  console.log('Got room:', roomSnapshot.exists);
+  const roomRef = collection(db, roomId)
+  const roomOfferDoc = doc(db, roomId, 'offer');
+  const roomOfferSnapshot = await getDoc(roomOfferDoc)
 
-  if (roomSnapshot.exists) {
+  console.log("roomSnapshot.exists()", roomOfferSnapshot.exists())
+  if (roomOfferSnapshot.exists()) {
     console.log('Create PeerConnection with configuration: ', configuration);
     peerConnection = new RTCPeerConnection(configuration);
     registerPeerConnectionListeners();
@@ -155,14 +156,16 @@ async function joinRoomById(roomId) {
     });
 
     // Code for collecting ICE candidates below
-    const calleeCandidatesCollection = roomRef.collection('calleeCandidates');
+    const calleeCandidatesCollection = doc(db, roomId, 'calleeCandidates');
     peerConnection.addEventListener('icecandidate', event => {
       if (!event.candidate) {
         console.log('Got final candidate!');
         return;
       }
       console.log('Got candidate: ', event.candidate);
-      calleeCandidatesCollection.add(event.candidate.toJSON());
+      // setDoc(roomOfferDoc, roomOfferDoc);
+      setDoc(calleeCandidatesCollection, event.candidate.toJSON())
+      // calleeCandidatesCollection.add(event.candidate.toJSON());
     });
     // Code for collecting ICE candidates above
 
@@ -175,32 +178,42 @@ async function joinRoomById(roomId) {
     });
 
     // Code for creating SDP answer below
-    const offer = roomSnapshot.data().offer;
+    // const offer = roomSnapshot.data().offer;
+    const offer = roomOfferSnapshot.data();
     console.log('Got offer:', offer);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     console.log('Created answer:', answer);
     await peerConnection.setLocalDescription(answer);
 
-    const roomWithAnswer = {
-      answer: {
-        type: answer.type,
-        sdp: answer.sdp,
-      },
+    const roomAnswer = {
+      type: answer.type,
+      sdp: answer.sdp,
     };
-    await roomRef.update(roomWithAnswer);
+
+    setDoc(doc(db, 'rooms', 'answer'), roomAnswer)
+    // updateDoc()
+    // await roomRef.update(roomWithAnswer);
+
     // Code for creating SDP answer above
 
     // Listening for remote ICE candidates below
-    roomRef.collection('callerCandidates').onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(async change => {
-        if (change.type === 'added') {
-          let data = change.doc.data();
-          console.log(`Got new remote ICE candidate: ${JSON.stringify(data)}`);
-          await peerConnection.addIceCandidate(new RTCIceCandidate(data));
-        }
-      });
-    });
+    const callerCandidatesRef = doc(db, roomId, 'callerCandidates')
+    const callerCandidatesSnap = await getDoc(callerCandidatesRef)
+    if (callerCandidatesSnap.exists()) {
+      const callerCandidate = callerCandidatesSnap.data()
+      console.log("callerCandidate", callerCandidate)
+    }
+
+    // roomRef.collection('callerCandidates').onSnapshot(snapshot => {
+    //   snapshot.docChanges().forEach(async change => {
+    //     if (change.type === 'added') {
+    //       let data = change.doc.data();
+    //       console.log(`Got new remote ICE candidate: ${JSON.stringify(data)}`);
+    //       await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+    //     }
+    //   });
+    // });
     // Listening for remote ICE candidates above
   }
 }
